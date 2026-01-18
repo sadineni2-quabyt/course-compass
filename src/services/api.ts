@@ -31,7 +31,7 @@ async function fetchAPI<T>(
 // Auth API
 export const authAPI = {
     sendOTP: async (email: string, role: string, name?: string) => {
-        return fetchAPI<{ message: string; dev_hint?: string }>('/auth/send-otp', {
+        return fetchAPI<{ message: string; userExists?: boolean; role?: string }>('/auth/send-otp', {
             method: 'POST',
             body: JSON.stringify({ email, role, name }),
         });
