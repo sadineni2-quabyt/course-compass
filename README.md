@@ -251,11 +251,3 @@ The system sends email notifications at each step:
 
 5. **Check Student Email**
    - Receives final status notification
-
-## 📝 License
-
-MIT License
-
----
-
-Made with ❤️ for academic course management
