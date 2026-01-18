@@ -1,21 +1,35 @@
-import { EnrollmentRequest, EnrollmentStatus } from '@/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
-import { CheckCircle, XCircle, Clock, User, Mail, BookOpen, Calendar } from 'lucide-react';
+import { CheckCircle, XCircle, User, Mail, BookOpen, Calendar } from 'lucide-react';
 import { useState } from 'react';
 import { format } from 'date-fns';
 
+// Flexible interface that works with API data
+interface EnrollmentRequestData {
+  id: string;
+  studentName: string;
+  studentEmail: string;
+  courseName: string;
+  courseCode: string;
+  instructorName?: string;
+  status: string;
+  instructorApproval?: boolean;
+  instructorRemarks?: string;
+  advisorRemarks?: string;
+  createdAt: string | Date;
+}
+
 interface EnrollmentRequestCardProps {
-  request: EnrollmentRequest;
+  request: EnrollmentRequestData;
   userRole: 'instructor' | 'advisor';
   onApprove?: (requestId: string, remarks: string) => void;
   onReject?: (requestId: string, remarks: string) => void;
   isProcessing?: boolean;
 }
 
-const getStatusBadge = (status: EnrollmentStatus) => {
+const getStatusBadge = (status: string) => {
   switch (status) {
     case 'pending_instructor':
       return <Badge variant="status-pending">Pending Instructor</Badge>;
@@ -26,7 +40,7 @@ const getStatusBadge = (status: EnrollmentStatus) => {
     case 'rejected':
       return <Badge variant="status-rejected">Rejected</Badge>;
     default:
-      return null;
+      return <Badge variant="secondary">{status}</Badge>;
   }
 };
 
@@ -38,8 +52,8 @@ const EnrollmentRequestCard = ({
   isProcessing,
 }: EnrollmentRequestCardProps) => {
   const [remarks, setRemarks] = useState('');
-  
-  const canTakeAction = 
+
+  const canTakeAction =
     (userRole === 'instructor' && request.status === 'pending_instructor') ||
     (userRole === 'advisor' && request.status === 'pending_advisor');
 
@@ -71,13 +85,15 @@ const EnrollmentRequestCard = ({
 
         {/* Course & Instructor Info */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-          <div className="flex items-center gap-2">
-            <BookOpen className="h-4 w-4 text-muted-foreground" />
-            <span>Instructor: {request.instructorName}</span>
-          </div>
+          {request.instructorName && (
+            <div className="flex items-center gap-2">
+              <BookOpen className="h-4 w-4 text-muted-foreground" />
+              <span>Instructor: {request.instructorName}</span>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <Calendar className="h-4 w-4 text-muted-foreground" />
-            <span>Requested: {format(request.createdAt, 'MMM dd, yyyy')}</span>
+            <span>Requested: {format(new Date(request.createdAt), 'MMM dd, yyyy')}</span>
           </div>
         </div>
 

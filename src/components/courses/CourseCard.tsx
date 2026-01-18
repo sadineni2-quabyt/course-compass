@@ -1,11 +1,21 @@
-import { Course } from '@/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Users, BookOpen, Clock } from 'lucide-react';
 
+// Accept any course object that has these properties
 interface CourseCardProps {
-  course: Course;
+  course: {
+    id: string;
+    code: string;
+    name: string;
+    description?: string;
+    credits: number;
+    instructorName?: string;
+    maxSeats: number;
+    enrolledCount: number;
+    isOpen: boolean;
+  };
   onEnroll?: (courseId: string) => void;
   isEnrolling?: boolean;
   showEnrollButton?: boolean;
@@ -13,10 +23,10 @@ interface CourseCardProps {
   isPending?: boolean;
 }
 
-const CourseCard = ({ 
-  course, 
-  onEnroll, 
-  isEnrolling, 
+const CourseCard = ({
+  course,
+  onEnroll,
+  isEnrolling,
   showEnrollButton = true,
   isEnrolled = false,
   isPending = false,
@@ -73,7 +83,7 @@ const CourseCard = ({
               )}
             </span>
           </div>
-          
+
           {showEnrollButton && !isEnrolled && !isPending && (
             <Button
               className="w-full mt-2"

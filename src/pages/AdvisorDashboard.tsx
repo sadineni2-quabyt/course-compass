@@ -1,17 +1,73 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import EnrollmentRequestCard from '@/components/enrollment/EnrollmentRequestCard';
-import { mockEnrollmentRequests } from '@/data/mockData';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card } from '@/components/ui/card';
-import { Clock, CheckCircle, XCircle, Inbox, Users } from 'lucide-react';
+import { Clock, CheckCircle, XCircle, Inbox, Users, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { EnrollmentRequest } from '@/types';
+import { useAuth } from '@/contexts/AuthContext';
+import { enrollmentsAPI } from '@/services/api';
+
+interface EnrollmentRequest {
+  id: string;
+  studentId: string;
+  studentName: string;
+  studentEmail: string;
+  courseId: string;
+  courseName: string;
+  courseCode: string;
+  status: string;
+  instructorApproval?: boolean;
+  instructorRemarks?: string;
+  advisorApproval?: boolean;
+  advisorRemarks?: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 const AdvisorDashboard = () => {
-  const [requests, setRequests] = useState<EnrollmentRequest[]>(mockEnrollmentRequests);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const { user } = useAuth();
   const { toast } = useToast();
+
+  const [requests, setRequests] = useState<EnrollmentRequest[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  const fetchRequests = useCallback(async () => {
+    if (!user?.id) return;
+
+    setIsLoading(true);
+    try {
+      const result = await enrollmentsAPI.getForAdvisor(user.id);
+
+      if (result.success && result.data?.enrollments) {
+        const enrichedRequests = result.data.enrollments.map((e: any) => ({
+          id: e._id || e.id,
+          studentId: e.studentId?._id || e.studentId,
+          studentName: e.studentId?.name || 'Unknown Student',
+          studentEmail: e.studentId?.email || '',
+          courseId: e.courseId?._id || e.courseId,
+          courseName: e.courseId?.name || 'Unknown Course',
+          courseCode: e.courseId?.code || 'N/A',
+          status: e.status,
+          instructorApproval: e.instructorApproval,
+          instructorRemarks: e.instructorRemarks,
+          advisorApproval: e.advisorApproval,
+          advisorRemarks: e.advisorRemarks,
+          createdAt: e.createdAt,
+          updatedAt: e.updatedAt,
+        }));
+        setRequests(enrichedRequests);
+      }
+    } catch (error) {
+      console.error('Error fetching requests:', error);
+    }
+    setIsLoading(false);
+  }, [user?.id]);
+
+  useEffect(() => {
+    fetchRequests();
+  }, [fetchRequests]);
 
   const pendingRequests = requests.filter(r => r.status === 'pending_advisor');
   const approvedRequests = requests.filter(r => r.status === 'approved');
@@ -20,54 +76,56 @@ const AdvisorDashboard = () => {
 
   const handleApprove = async (requestId: string, remarks: string) => {
     setIsProcessing(true);
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    setRequests(prev =>
-      prev.map(r =>
-        r.id === requestId
-          ? {
-              ...r,
-              status: 'approved' as const,
-              advisorApproval: true,
-              advisorRemarks: remarks || 'Approved by advisor',
-              updatedAt: new Date(),
-            }
-          : r
-      )
-    );
-    
-    toast({
-      title: 'Enrollment Confirmed!',
-      description: 'The student has been enrolled in the course. A confirmation email will be sent.',
-    });
+
+    const result = await enrollmentsAPI.advisorAction(requestId, 'approve', remarks);
+
+    if (result.success) {
+      toast({
+        title: 'Enrollment Confirmed!',
+        description: 'The student has been enrolled in the course. A confirmation email will be sent.',
+      });
+      fetchRequests(); // Refresh the list
+    } else {
+      toast({
+        title: 'Error',
+        description: result.error || 'Failed to approve request',
+        variant: 'destructive',
+      });
+    }
     setIsProcessing(false);
   };
 
   const handleReject = async (requestId: string, remarks: string) => {
     setIsProcessing(true);
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    setRequests(prev =>
-      prev.map(r =>
-        r.id === requestId
-          ? {
-              ...r,
-              status: 'rejected' as const,
-              advisorApproval: false,
-              advisorRemarks: remarks || 'Rejected by advisor',
-              updatedAt: new Date(),
-            }
-          : r
-      )
-    );
-    
-    toast({
-      title: 'Request Rejected',
-      description: 'The enrollment request has been rejected.',
-      variant: 'destructive',
-    });
+
+    const result = await enrollmentsAPI.advisorAction(requestId, 'reject', remarks);
+
+    if (result.success) {
+      toast({
+        title: 'Request Rejected',
+        description: 'The enrollment request has been rejected.',
+        variant: 'destructive',
+      });
+      fetchRequests(); // Refresh the list
+    } else {
+      toast({
+        title: 'Error',
+        description: result.error || 'Failed to reject request',
+        variant: 'destructive',
+      });
+    }
     setIsProcessing(false);
   };
+
+  if (isLoading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
@@ -79,7 +137,7 @@ const AdvisorDashboard = () => {
               Branch Advisor Dashboard
             </h1>
             <p className="text-muted-foreground">
-              Final approval for student course enrollments
+              Welcome, {user?.name}! Final approval for student course enrollments
             </p>
           </div>
           <div className="flex gap-4">
@@ -135,6 +193,9 @@ const AdvisorDashboard = () => {
               <Card className="p-8 text-center">
                 <Inbox className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                 <p className="text-muted-foreground">No pending requests at the moment.</p>
+                <p className="text-sm text-muted-foreground mt-2">
+                  Requests will appear here after instructors approve them.
+                </p>
               </Card>
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

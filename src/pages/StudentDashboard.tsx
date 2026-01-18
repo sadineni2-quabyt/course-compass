@@ -1,45 +1,143 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import CourseCard from '@/components/courses/CourseCard';
-import { mockCourses, mockEnrollmentRequests } from '@/data/mockData';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { BookOpen, Clock, CheckCircle, GraduationCap } from 'lucide-react';
+import { BookOpen, Clock, CheckCircle, GraduationCap, Loader2, XCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
+import { coursesAPI, enrollmentsAPI, usersAPI, Course, Enrollment } from '@/services/api';
 import { format } from 'date-fns';
 
+interface EnrollmentWithDetails extends Enrollment {
+  courseName?: string;
+  courseCode?: string;
+  instructorName?: string;
+}
+
 const StudentDashboard = () => {
-  const [enrolledCourses, setEnrolledCourses] = useState<string[]>(['course-3']);
-  const [pendingRequests, setPendingRequests] = useState<string[]>(['course-1']);
-  const [isEnrolling, setIsEnrolling] = useState<string | null>(null);
+  const { user } = useAuth();
   const { toast } = useToast();
 
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [enrollments, setEnrollments] = useState<EnrollmentWithDetails[]>([]);
+  const [advisors, setAdvisors] = useState<{ id: string; name: string }[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isEnrolling, setIsEnrolling] = useState<string | null>(null);
+
+  // Fetch data on mount
+  const fetchData = useCallback(async () => {
+    if (!user?.id) return;
+
+    setIsLoading(true);
+    try {
+      // Fetch courses
+      const coursesResult = await coursesAPI.getOpen();
+      if (coursesResult.success && coursesResult.data?.courses) {
+        setCourses(coursesResult.data.courses);
+      }
+
+      // Fetch student's enrollments
+      const enrollmentsResult = await enrollmentsAPI.getForStudent(user.id);
+      if (enrollmentsResult.success && enrollmentsResult.data?.enrollments) {
+        const enrichedEnrollments = enrollmentsResult.data.enrollments.map((e: any) => ({
+          ...e,
+          id: e._id || e.id,
+          courseName: e.courseId?.name || 'Unknown Course',
+          courseCode: e.courseId?.code || 'N/A',
+          instructorName: 'Course Instructor',
+          courseId: e.courseId?._id || e.courseId,
+          studentId: e.studentId?._id || e.studentId,
+        }));
+        setEnrollments(enrichedEnrollments);
+      }
+
+      // Fetch advisors for enrollment
+      const advisorsResult = await usersAPI.getByRole('advisor');
+      if (advisorsResult.success && advisorsResult.data?.users) {
+        setAdvisors(advisorsResult.data.users.map((a: any) => ({ id: a.id, name: a.name })));
+      }
+    } catch (error) {
+      console.error('Error fetching data:', error);
+    }
+    setIsLoading(false);
+  }, [user?.id]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
   const handleEnroll = async (courseId: string) => {
+    if (!user?.id) return;
+
     setIsEnrolling(courseId);
-    
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    setPendingRequests(prev => [...prev, courseId]);
+
+    // Get first advisor as default (in real app, you might let user choose)
+    const advisorId = advisors[0]?.id;
+
+    const result = await enrollmentsAPI.create(user.id, courseId, advisorId);
+
     setIsEnrolling(null);
-    
-    const course = mockCourses.find(c => c.id === courseId);
-    toast({
-      title: 'Enrollment Request Sent!',
-      description: `Your request for ${course?.name} has been sent to the instructor for approval.`,
-    });
+
+    if (result.success) {
+      const course = courses.find(c => c.id === courseId);
+      toast({
+        title: 'Enrollment Request Sent!',
+        description: `Your request for ${course?.name} has been sent to the instructor for approval.`,
+      });
+      // Refresh data
+      fetchData();
+    } else {
+      toast({
+        title: 'Enrollment Failed',
+        description: result.error || 'Could not submit enrollment request',
+        variant: 'destructive',
+      });
+    }
   };
 
-  const availableCourses = mockCourses.filter(
-    c => !enrolledCourses.includes(c.id) && !pendingRequests.includes(c.id)
+  // Compute counts
+  const enrolledCount = enrollments.filter(e => e.status === 'approved').length;
+  const pendingCount = enrollments.filter(e => e.status === 'pending_instructor' || e.status === 'pending_advisor').length;
+  const enrolledCourseIds = enrollments.filter(e => e.status === 'approved').map(e => e.courseId);
+  const pendingCourseIds = enrollments.filter(e => e.status === 'pending_instructor' || e.status === 'pending_advisor').map(e => e.courseId);
+
+  const availableCourses = courses.filter(
+    c => !enrolledCourseIds.includes(c.id) && !pendingCourseIds.includes(c.id)
   );
+  const myEnrolledCourses = courses.filter(c => enrolledCourseIds.includes(c.id));
+  const myPendingCourses = courses.filter(c => pendingCourseIds.includes(c.id));
 
-  const myEnrolledCourses = mockCourses.filter(c => enrolledCourses.includes(c.id));
-  const myPendingCourses = mockCourses.filter(c => pendingRequests.includes(c.id));
+  const getStatusBadgeVariant = (status: string) => {
+    switch (status) {
+      case 'approved': return 'status-approved';
+      case 'rejected': return 'status-rejected';
+      case 'pending_instructor': return 'status-pending';
+      case 'pending_advisor': return 'status-pending';
+      default: return 'status-pending';
+    }
+  };
 
-  // Mock enrollment history
-  const enrollmentHistory = mockEnrollmentRequests.filter(r => r.studentId === 'student-1');
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'approved': return 'Approved';
+      case 'rejected': return 'Rejected';
+      case 'pending_instructor': return 'Pending Instructor';
+      case 'pending_advisor': return 'Pending Advisor';
+      default: return status;
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
@@ -51,7 +149,7 @@ const StudentDashboard = () => {
               Student Dashboard
             </h1>
             <p className="text-muted-foreground">
-              Browse available courses and track your enrollment status
+              Welcome, {user?.name}! Browse courses and track your enrollment status
             </p>
           </div>
           <div className="flex gap-4">
@@ -61,7 +159,7 @@ const StudentDashboard = () => {
                   <CheckCircle className="h-5 w-5 text-success" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{enrolledCourses.length}</p>
+                  <p className="text-2xl font-bold">{enrolledCount}</p>
                   <p className="text-xs text-muted-foreground">Enrolled</p>
                 </div>
               </div>
@@ -72,7 +170,7 @@ const StudentDashboard = () => {
                   <Clock className="h-5 w-5 text-pending" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{pendingRequests.length}</p>
+                  <p className="text-2xl font-bold">{pendingCount}</p>
                   <p className="text-xs text-muted-foreground">Pending</p>
                 </div>
               </div>
@@ -174,35 +272,41 @@ const StudentDashboard = () => {
                 <CardDescription>Track all your enrollment requests and their status</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  {enrollmentHistory.map(request => (
-                    <div
-                      key={request.id}
-                      className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-lg bg-muted/50 gap-3"
-                    >
-                      <div className="space-y-1">
-                        <p className="font-medium">{request.courseName}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {request.courseCode} • {request.instructorName}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          Requested: {format(request.createdAt, 'MMM dd, yyyy')}
-                        </p>
-                      </div>
-                      <Badge
-                        variant={
-                          request.status === 'approved'
-                            ? 'status-approved'
-                            : request.status === 'rejected'
-                            ? 'status-rejected'
-                            : 'status-pending'
-                        }
+                {enrollments.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Clock className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p>No enrollment requests yet.</p>
+                    <p className="text-sm">Apply for a course to see your history here.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {enrollments.map(request => (
+                      <div
+                        key={request.id}
+                        className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-lg bg-muted/50 gap-3"
                       >
-                        {request.status.replace('_', ' ')}
-                      </Badge>
-                    </div>
-                  ))}
-                </div>
+                        <div className="space-y-1">
+                          <p className="font-medium">{request.courseName}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {request.courseCode} • {request.instructorName}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Requested: {request.createdAt ? format(new Date(request.createdAt), 'MMM dd, yyyy') : 'N/A'}
+                          </p>
+                          {request.status === 'rejected' && (
+                            <p className="text-xs text-destructive flex items-center gap-1">
+                              <XCircle className="h-3 w-3" />
+                              {request.instructorRemarks || request.advisorRemarks || 'Request was rejected'}
+                            </p>
+                          )}
+                        </div>
+                        <Badge variant={getStatusBadgeVariant(request.status) as any}>
+                          {getStatusLabel(request.status)}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

@@ -1,17 +1,69 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import EnrollmentRequestCard from '@/components/enrollment/EnrollmentRequestCard';
-import { mockEnrollmentRequests } from '@/data/mockData';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card } from '@/components/ui/card';
-import { Clock, CheckCircle, XCircle, Inbox } from 'lucide-react';
+import { Clock, CheckCircle, XCircle, Inbox, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { EnrollmentRequest } from '@/types';
+import { useAuth } from '@/contexts/AuthContext';
+import { enrollmentsAPI } from '@/services/api';
+
+interface EnrollmentRequest {
+  id: string;
+  studentId: string;
+  studentName: string;
+  studentEmail: string;
+  courseId: string;
+  courseName: string;
+  courseCode: string;
+  status: string;
+  instructorApproval?: boolean;
+  instructorRemarks?: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 const InstructorDashboard = () => {
-  const [requests, setRequests] = useState<EnrollmentRequest[]>(mockEnrollmentRequests);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const { user } = useAuth();
   const { toast } = useToast();
+
+  const [requests, setRequests] = useState<EnrollmentRequest[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  const fetchRequests = useCallback(async () => {
+    if (!user?.id) return;
+
+    setIsLoading(true);
+    try {
+      const result = await enrollmentsAPI.getForInstructor(user.id);
+
+      if (result.success && result.data?.enrollments) {
+        const enrichedRequests = result.data.enrollments.map((e: any) => ({
+          id: e._id || e.id,
+          studentId: e.studentId?._id || e.studentId,
+          studentName: e.studentId?.name || 'Unknown Student',
+          studentEmail: e.studentId?.email || '',
+          courseId: e.courseId?._id || e.courseId,
+          courseName: e.courseId?.name || 'Unknown Course',
+          courseCode: e.courseId?.code || 'N/A',
+          status: e.status,
+          instructorApproval: e.instructorApproval,
+          instructorRemarks: e.instructorRemarks,
+          createdAt: e.createdAt,
+          updatedAt: e.updatedAt,
+        }));
+        setRequests(enrichedRequests);
+      }
+    } catch (error) {
+      console.error('Error fetching requests:', error);
+    }
+    setIsLoading(false);
+  }, [user?.id]);
+
+  useEffect(() => {
+    fetchRequests();
+  }, [fetchRequests]);
 
   const pendingRequests = requests.filter(r => r.status === 'pending_instructor');
   const approvedRequests = requests.filter(r => r.instructorApproval === true);
@@ -19,54 +71,56 @@ const InstructorDashboard = () => {
 
   const handleApprove = async (requestId: string, remarks: string) => {
     setIsProcessing(true);
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    setRequests(prev =>
-      prev.map(r =>
-        r.id === requestId
-          ? {
-              ...r,
-              status: 'pending_advisor' as const,
-              instructorApproval: true,
-              instructorRemarks: remarks || 'Approved by instructor',
-              updatedAt: new Date(),
-            }
-          : r
-      )
-    );
-    
-    toast({
-      title: 'Request Approved',
-      description: 'The enrollment request has been forwarded to the branch advisor.',
-    });
+
+    const result = await enrollmentsAPI.instructorAction(requestId, 'approve', remarks);
+
+    if (result.success) {
+      toast({
+        title: 'Request Approved',
+        description: 'The enrollment request has been forwarded to the branch advisor.',
+      });
+      fetchRequests(); // Refresh the list
+    } else {
+      toast({
+        title: 'Error',
+        description: result.error || 'Failed to approve request',
+        variant: 'destructive',
+      });
+    }
     setIsProcessing(false);
   };
 
   const handleReject = async (requestId: string, remarks: string) => {
     setIsProcessing(true);
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    setRequests(prev =>
-      prev.map(r =>
-        r.id === requestId
-          ? {
-              ...r,
-              status: 'rejected' as const,
-              instructorApproval: false,
-              instructorRemarks: remarks || 'Rejected by instructor',
-              updatedAt: new Date(),
-            }
-          : r
-      )
-    );
-    
-    toast({
-      title: 'Request Rejected',
-      description: 'The enrollment request has been rejected.',
-      variant: 'destructive',
-    });
+
+    const result = await enrollmentsAPI.instructorAction(requestId, 'reject', remarks);
+
+    if (result.success) {
+      toast({
+        title: 'Request Rejected',
+        description: 'The enrollment request has been rejected.',
+        variant: 'destructive',
+      });
+      fetchRequests(); // Refresh the list
+    } else {
+      toast({
+        title: 'Error',
+        description: result.error || 'Failed to reject request',
+        variant: 'destructive',
+      });
+    }
     setIsProcessing(false);
   };
+
+  if (isLoading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
@@ -78,7 +132,7 @@ const InstructorDashboard = () => {
               Instructor Dashboard
             </h1>
             <p className="text-muted-foreground">
-              Review and approve student enrollment requests
+              Welcome, {user?.name}! Review and approve student enrollment requests
             </p>
           </div>
           <div className="flex gap-4">

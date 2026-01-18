@@ -4,10 +4,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Mail, ArrowRight, Loader2 } from 'lucide-react';
+import { UserRole } from '@/types';
+import { authAPI } from '@/services/api';
 import OTPInput from './OTPInput';
 
 interface LoginFormProps {
-  onLogin: (email: string) => void;
+  onLogin: (email: string, role: UserRole, userId: string, name: string) => void;
 }
 
 const LoginForm = ({ onLogin }: LoginFormProps) => {
@@ -15,48 +17,83 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
   const [step, setStep] = useState<'email' | 'otp'>('email');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
+  const [detectedRole, setDetectedRole] = useState<string | null>(null);
 
-  const validateEmail = (email: string) => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(email) && email.endsWith('.edu');
+  const validateEmail = (email: string): { valid: boolean; error?: string } => {
+    if (!email.trim()) {
+      return { valid: false, error: 'Email is required' };
+    }
+    if (!email.includes('@')) {
+      return { valid: false, error: 'Email must contain @' };
+    }
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!emailRegex.test(email)) {
+      return { valid: false, error: 'Please enter a valid email address' };
+    }
+    return { valid: true };
   };
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setSuccessMessage('');
 
-    if (!validateEmail(email)) {
-      setError('Please enter a valid college email address (.edu)');
+    const emailValidation = validateEmail(email);
+    if (!emailValidation.valid) {
+      setError(emailValidation.error || 'Invalid email');
       return;
     }
 
     setIsLoading(true);
-    // Simulate OTP sending
-    await new Promise(resolve => setTimeout(resolve, 1500));
+
+    // Send OTP
+    const result = await authAPI.sendOTP(email, 'student'); // Role doesn't matter anymore
+
     setIsLoading(false);
-    setStep('otp');
+
+    if (result.success) {
+      // Store detected role if user exists
+      if (result.data?.role) {
+        setDetectedRole(result.data.role);
+      }
+      setSuccessMessage('OTP sent to your email!');
+      setStep('otp');
+    } else {
+      setError(result.error || 'Failed to send OTP');
+    }
   };
 
   const handleOTPVerify = async (otp: string) => {
     setIsLoading(true);
     setError('');
-    
-    // Simulate OTP verification
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // For demo, accept any 6-digit OTP
-    if (otp.length === 6) {
-      onLogin(email);
-    } else {
-      setError('Invalid OTP. Please try again.');
-    }
+
+    // Verify OTP - backend will determine the role
+    const result = await authAPI.verifyOTP(email, otp, 'student'); // Role handled by backend
+
     setIsLoading(false);
+
+    if (result.success && result.data?.user) {
+      const user = result.data.user;
+      onLogin(user.email, user.role as UserRole, user.id, user.name);
+    } else {
+      setError(result.error || 'Invalid OTP. Please try again.');
+    }
   };
 
   const handleResendOTP = async () => {
     setIsLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    setError('');
+
+    const result = await authAPI.sendOTP(email, 'student');
+
     setIsLoading(false);
+
+    if (result.success) {
+      setSuccessMessage('OTP resent to your email!');
+    } else {
+      setError(result.error || 'Failed to resend OTP');
+    }
   };
 
   return (
@@ -66,8 +103,8 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
           {step === 'email' ? 'Sign In' : 'Verify OTP'}
         </CardTitle>
         <CardDescription className="text-muted-foreground">
-          {step === 'email' 
-            ? 'Enter your college email to receive a one-time password'
+          {step === 'email'
+            ? 'Enter your email to receive a one-time password'
             : `We've sent a 6-digit code to ${email}`
           }
         </CardDescription>
@@ -77,14 +114,14 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
           <form onSubmit={handleEmailSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email" className="text-sm font-medium">
-                College Email
+                Email Address
               </Label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
                 <Input
                   id="email"
                   type="email"
-                  placeholder="your.name@university.edu"
+                  placeholder="your.name@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="pl-10 h-12"
@@ -92,14 +129,21 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
                 />
               </div>
             </div>
-            
+
+            {/* Info message about role detection */}
+            <p className="text-xs text-muted-foreground text-center">
+              Your role will be detected automatically based on your registration.
+              <br />
+              New users will be registered as students.
+            </p>
+
             {error && (
               <p className="text-sm text-destructive animate-fade-in">{error}</p>
             )}
 
-            <Button 
-              type="submit" 
-              className="w-full h-12" 
+            <Button
+              type="submit"
+              className="w-full h-12"
               variant="hero"
               disabled={isLoading || !email}
             >
@@ -118,12 +162,25 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
           </form>
         ) : (
           <div className="space-y-4">
-            <OTPInput 
-              length={6} 
+            {/* Show detected role if available */}
+            {detectedRole && (
+              <div className="text-center p-3 rounded-lg bg-primary/10">
+                <p className="text-sm text-primary font-medium">
+                  Logging in as: {detectedRole.charAt(0).toUpperCase() + detectedRole.slice(1)}
+                </p>
+              </div>
+            )}
+
+            <OTPInput
+              length={6}
               onComplete={handleOTPVerify}
               disabled={isLoading}
             />
-            
+
+            {successMessage && (
+              <p className="text-sm text-green-600 text-center animate-fade-in">{successMessage}</p>
+            )}
+
             {error && (
               <p className="text-sm text-destructive text-center animate-fade-in">{error}</p>
             )}
@@ -132,8 +189,8 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
               <p className="text-sm text-muted-foreground">
                 Didn't receive the code?
               </p>
-              <Button 
-                variant="link" 
+              <Button
+                variant="link"
                 onClick={handleResendOTP}
                 disabled={isLoading}
                 className="text-primary"
@@ -142,8 +199,8 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
               </Button>
             </div>
 
-            <Button 
-              variant="ghost" 
+            <Button
+              variant="ghost"
               className="w-full"
               onClick={() => setStep('email')}
               disabled={isLoading}
